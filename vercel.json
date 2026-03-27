@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/process-newsletters",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 0 * * *"
     },
     {
       "path": "/api/cron/export-report",
