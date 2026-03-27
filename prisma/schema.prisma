@@ -1,0 +1,372 @@
+// Newsletter Database Platform - Prisma Schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  FREE
+  PREMIUM
+  ADMIN
+}
+
+enum ImportStatus {
+  PENDING
+  PROCESSED
+  FAILED
+  DUPLICATE
+}
+
+enum NotificationType {
+  NEW_NEWSLETTER
+  SYSTEM
+  COMMENT_REPLY
+}
+
+enum NotificationPreference {
+  INSTANT
+  DAILY_DIGEST
+  OFF
+}
+
+enum AIProviderType {
+  OLLAMA
+  OPENAI
+  ANTHROPIC
+  GROQ
+  GEMINI
+  MISTRAL
+  CUSTOM
+}
+
+enum ProcessingStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ─── NextAuth Models ─────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  emailVerified DateTime? @map("email_verified")
+  passwordHash  String?   @map("password_hash")
+  role          UserRole  @default(FREE)
+
+  stripeCustomerId     String? @unique @map("stripe_customer_id")
+  stripeSubscriptionId String? @map("stripe_subscription_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  accounts      Account[]
+  sessions      Session[]
+  subscriptions Subscription[]
+  favorites     UserFavorite[]
+  readHistory   ReadHistory[]
+  comments      Comment[]
+  ratings       Rating[]
+  notifications Notification[]
+  interests     UserInterest[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String  @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─── Newsletter Models ───────────────────────────────────────────────────────
+
+model NewsletterSource {
+  id          String  @id @default(cuid())
+  name        String
+  senderEmail String  @unique @map("sender_email")
+  description String?
+  category    String?
+  websiteUrl  String? @map("website_url")
+  logoUrl     String? @map("logo_url")
+  isApproved  Boolean @default(false) @map("is_approved")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  newsletters   Newsletter[]
+  subscriptions Subscription[]
+  favorites     UserFavorite[]
+
+  @@map("newsletter_sources")
+}
+
+model Newsletter {
+  id               String    @id @default(cuid())
+  sourceId         String    @map("source_id")
+  subject          String
+  rawHtml          String    @map("raw_html") @db.Text
+  rawText          String?   @map("raw_text") @db.Text
+  processedContent String?   @map("processed_content") @db.Text
+  summary          String?   @db.Text
+  highlights       Json?
+  publishedAt      DateTime? @map("published_at")
+  importedAt       DateTime  @default(now()) @map("imported_at")
+  isProcessed      Boolean   @default(false) @map("is_processed")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  source         NewsletterSource  @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  tags           NewsletterTag[]
+  comments       Comment[]
+  ratings        Rating[]
+  readHistory    ReadHistory[]
+  notifications  Notification[]
+  importLog      EmailImportLog?
+  processingLogs AIProcessingLog[]
+
+  @@index([sourceId])
+  @@index([isProcessed])
+  @@index([publishedAt])
+  @@map("newsletters")
+}
+
+// ─── Tagging ─────────────────────────────────────────────────────────────────
+
+model Tag {
+  id   String @id @default(cuid())
+  name String @unique
+  slug String @unique
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  newsletters   NewsletterTag[]
+  userInterests UserInterest[]
+
+  @@map("tags")
+}
+
+model NewsletterTag {
+  newsletterId String @map("newsletter_id")
+  tagId        String @map("tag_id")
+
+  newsletter Newsletter @relation(fields: [newsletterId], references: [id], onDelete: Cascade)
+  tag        Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([newsletterId, tagId])
+  @@map("newsletter_tags")
+}
+
+model UserInterest {
+  userId String @map("user_id")
+  tagId  String @map("tag_id")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tagId])
+  @@map("user_interests")
+}
+
+// ─── User Engagement ─────────────────────────────────────────────────────────
+
+model Subscription {
+  id       String @id @default(cuid())
+  userId   String @map("user_id")
+  sourceId String @map("source_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source NewsletterSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, sourceId])
+  @@map("subscriptions")
+}
+
+model UserFavorite {
+  id               String                 @id @default(cuid())
+  userId           String                 @map("user_id")
+  sourceId         String                 @map("source_id")
+  notificationPref NotificationPreference @default(INSTANT) @map("notification_pref")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source NewsletterSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, sourceId])
+  @@map("user_favorites")
+}
+
+model ReadHistory {
+  id           String @id @default(cuid())
+  userId       String @map("user_id")
+  newsletterId String @map("newsletter_id")
+
+  readAt DateTime @default(now()) @map("read_at")
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  newsletter Newsletter @relation(fields: [newsletterId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, newsletterId])
+  @@map("read_history")
+}
+
+model Comment {
+  id           String  @id @default(cuid())
+  userId       String  @map("user_id")
+  newsletterId String  @map("newsletter_id")
+  parentId     String? @map("parent_id")
+  body         String  @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  newsletter Newsletter @relation(fields: [newsletterId], references: [id], onDelete: Cascade)
+  parent     Comment?   @relation("CommentThread", fields: [parentId], references: [id], onDelete: SetNull)
+  replies    Comment[]  @relation("CommentThread")
+
+  @@index([newsletterId])
+  @@index([userId])
+  @@map("comments")
+}
+
+model Rating {
+  id           String @id @default(cuid())
+  userId       String @map("user_id")
+  newsletterId String @map("newsletter_id")
+  score        Int
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  newsletter Newsletter @relation(fields: [newsletterId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, newsletterId])
+  @@index([newsletterId])
+  @@map("ratings")
+}
+
+model Notification {
+  id           String           @id @default(cuid())
+  userId       String           @map("user_id")
+  type         NotificationType
+  message      String
+  newsletterId String?          @map("newsletter_id")
+  isRead       Boolean          @default(false) @map("is_read")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  newsletter Newsletter? @relation(fields: [newsletterId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([isRead])
+  @@map("notifications")
+}
+
+// ─── Email Import ────────────────────────────────────────────────────────────
+
+model EmailImportLog {
+  id               String       @id @default(cuid())
+  mailgunMessageId String       @unique @map("mailgun_message_id")
+  senderEmail      String       @map("sender_email")
+  subject          String?
+  receivedAt       DateTime     @default(now()) @map("received_at")
+  status           ImportStatus @default(PENDING)
+  errorMessage     String?      @map("error_message")
+  newsletterId     String?      @unique @map("newsletter_id")
+
+  newsletter Newsletter? @relation(fields: [newsletterId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@map("email_import_logs")
+}
+
+// ─── AI Processing ───────────────────────────────────────────────────────────
+
+model AIProviderConfig {
+  id          String         @id @default(cuid())
+  provider    AIProviderType
+  name        String
+  apiKey      String?        @map("api_key")
+  apiEndpoint String?        @map("api_endpoint")
+  model       String
+  isActive    Boolean        @default(true) @map("is_active")
+  isPrimary   Boolean        @default(false) @map("is_primary")
+  isFallback  Boolean        @default(false) @map("is_fallback")
+  settings    Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("ai_provider_configs")
+}
+
+model AIProcessingLog {
+  id           String           @id @default(cuid())
+  newsletterId String           @map("newsletter_id")
+  provider     AIProviderType
+  model        String
+  tokensUsed   Int?             @map("tokens_used")
+  costEstimate Float?           @map("cost_estimate")
+  durationMs   Int?             @map("duration_ms")
+  status       ProcessingStatus
+  errorMessage String?          @map("error_message")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  newsletter Newsletter @relation(fields: [newsletterId], references: [id], onDelete: Cascade)
+
+  @@index([newsletterId])
+  @@index([status])
+  @@map("ai_processing_logs")
+}
